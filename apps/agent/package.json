@@ -1,0 +1,17 @@
+{
+  "name": "@mind/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "bin": {
+    "mind-agent": "src/main.js"
+  },
+  "scripts": {
+    "start": "node src/main.js"
+  },
+  "dependencies": {
+    "@mind/agent-core": "workspace:*",
+    "@mind/collectors-os": "workspace:*"
+  }
+}
