@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+coverage/
+dist/
+data/
+
+# El proyecto usa pnpm. Un lockfile de npm aqui significa que
+# alguien corrio `npm install` por error: dos lockfiles se contradicen.
+package-lock.json
+yarn.lock
+
+# Notas y borradores locales, fuera del producto.
+.labs/
