@@ -1,6 +1,6 @@
 {
   "name": "@mind/agent",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "license": "Apache-2.0",
@@ -12,6 +12,10 @@
   },
   "dependencies": {
     "@mind/agent-core": "workspace:*",
-    "@mind/collectors-os": "workspace:*"
+    "@mind/collectors-docker": "workspace:*",
+    "@mind/collectors-http": "workspace:*",
+    "@mind/collectors-os": "workspace:*",
+    "@mind/hub-client": "workspace:*",
+    "@mind/protocol": "workspace:*"
   }
 }
