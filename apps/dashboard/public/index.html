@@ -23,6 +23,39 @@
     </header>
 
     <main class="layout">
+      <div class="main-col">
+      <section v-if="diagnoses.length" class="diagnoses">
+        <details v-for="(d, i) in diagnoses" :key="d.id" class="diag" :class="d.status" :open="i === 0">
+          <summary>
+            <span class="ai-tag">IA</span>
+            <span class="diag-title">Incidente {{ clock(d.createdAt) }} · {{ d.triggers.map(t => t.node + ' ' + t.target.replace(/^(http|container):/, '')).join(', ') }}</span>
+            <span v-if="d.status === 'listo'" class="pill small conf" :class="d.result.confianza">confianza {{ d.result.confianza }}</span>
+          </summary>
+
+          <p v-if="d.status === 'pendiente'" class="analyzing">Analizando el incidente con {{ providerLabel(d) }}…</p>
+          <p v-else-if="d.status === 'error'" class="diag-error">No se pudo diagnosticar: {{ d.error }}</p>
+          <div v-else class="diag-body">
+            <p class="diag-summary">{{ d.result.resumen }}</p>
+            <p class="diag-cause"><b>Causa probable:</b> {{ d.result.causa_probable }}</p>
+            <div class="diag-cols">
+              <div>
+                <h4>Evidencia</h4>
+                <ul><li v-for="e in d.result.evidencia" :key="e">{{ e }}</li></ul>
+              </div>
+              <div>
+                <h4>Qué revisar</h4>
+                <ol><li v-for="q in d.result.que_revisar" :key="q">{{ q }}</li></ol>
+              </div>
+            </div>
+            <p class="diag-meta">{{ providerLabel(d) }} · {{ (d.latencyMs / 1000).toFixed(1) }} s · prompt {{ d.promptVersion }} · datos sensibles enmascarados antes de enviarse</p>
+          </div>
+          <details v-if="d.context" class="diag-audit">
+            <summary>Datos enviados a la IA</summary>
+            <pre>{{ JSON.stringify(d.context, null, 2) }}</pre>
+          </details>
+        </details>
+      </section>
+
       <section class="fleet">
         <p v-if="!nodes.length" class="empty">Esperando el primer reporte de un agente…</p>
 
@@ -85,6 +118,7 @@
           </ul>
         </article>
       </section>
+      </div>
 
       <aside class="events">
         <h3>Cambios de estado</h3>

@@ -6,7 +6,7 @@ const PLURAL = { UP: 'operativos', DEGRADED: 'degradados', DOWN: 'caídos', UNKN
 const ORDER = { DOWN: 0, DEGRADED: 1, UNKNOWN: 2, UP: 3 }
 
 createApp({
-  data: () => ({ nodes: [], events: [], connected: true, updatedAt: null }),
+  data: () => ({ nodes: [], events: [], diagnoses: [], connected: true, updatedAt: null }),
 
   computed: {
     summary () {
@@ -24,10 +24,12 @@ createApp({
   methods: {
     async refresh () {
       try {
-        const [fleet, events] = await Promise.all([
+        const [fleet, events, diagnoses] = await Promise.all([
           fetch('/api/v1/fleet').then(ok),
-          fetch('/api/v1/events?limit=40').then(ok)
+          fetch('/api/v1/events?limit=40').then(ok),
+          fetch('/api/v1/diagnoses?limit=3').then(ok)
         ])
+        this.diagnoses = diagnoses.diagnoses
         // Los nodos con problemas primero: es lo que hay que ver al abrir el panel.
         this.nodes = fleet.nodes.sort((a, b) =>
           ORDER[a.status] - ORDER[b.status] || this.failing(b) - this.failing(a) || a.node.localeCompare(b.node))
@@ -39,6 +41,7 @@ createApp({
       }
     },
     label: (s) => LABELS[s] ?? s,
+    providerLabel: (d) => `${d.provider === 'ollama' ? 'Ollama (local)' : d.provider === 'gemini' ? 'Gemini' : d.provider} · ${d.model}`,
     plural: (s, n) => (n === 1 ? (LABELS[s] ?? s) : (PLURAL[s] ?? s)).toLowerCase(),
     // Aplicaciones y contenedores con problemas: lo que el host no muestra.
     failing: (n) => [...n.apps, ...n.containers].filter((c) => c.status === 'DOWN' || c.status === 'DEGRADED').length,
