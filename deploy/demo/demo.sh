@@ -9,6 +9,7 @@
 #   ./demo.sh cortar <servidor>    corta la red entre un servidor y el Hub
 #   ./demo.sh restaurar <servidor> la restablece: el agente reenvia su cola
 #   ./demo.sh reset                detiene el trafico provocado y enciende todo
+#   ./demo.sh ia <proveedor>       cambia el proveedor del diagnostico: ollama | gemini | none
 #   ./demo.sh puertos              muestra que ningun agente escucha en un puerto
 #   ./demo.sh revocar <servidor>   revoca el token de un servidor
 #   ./demo.sh logs <servidor>      sigue el NDJSON de un agente
@@ -39,8 +40,11 @@ case "${1:-}" in
         echo "TOKEN_WEB=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
         echo "TOKEN_APP=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
         echo "TOKEN_DB=$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=')"
+        # Configuracion de IA conservada por un `down` anterior (clave incluida).
+        [ -f .env.ia ] && cat .env.ia
       } > .env
       chmod 600 .env
+      rm -f .env.ia
     fi
     set -a; . ./.env; set +a
     compose build
@@ -98,8 +102,37 @@ case "${1:-}" in
         console.log(own.length ? own.length + " socket(s) de escucha" : "0 sockets de escucha en el proceso del agente")'
     done
     ;;
+  ia)
+    case "${2:-}" in ollama|gemini|none) ;; *) echo "proveedor: ollama | gemini | none" >&2; exit 64 ;; esac
+    if [ "$2" = gemini ] && ! grep -q '^MIND_AI_GEMINI_API_KEY=.\+' .env; then
+      echo "Falta MIND_AI_GEMINI_API_KEY en deploy/demo/.env (clave de Google AI Studio)" >&2; exit 78
+    fi
+    # gemini: cadena con respaldo (otro modelo de Gemini, luego el local).
+    # ollama: solo local, sin respaldo externo: ningun dato sale de la maquina.
+    fallbacks=""
+    [ "$2" = gemini ] && fallbacks="gemini:gemini-3.1-flash-lite,ollama"
+    grep -v -E '^MIND_AI_(PROVIDER|FALLBACKS)=' .env > .env.tmp
+    { echo "MIND_AI_PROVIDER=$2"; echo "MIND_AI_FALLBACKS=$fallbacks"; } >> .env.tmp
+    mv .env.tmp .env; chmod 600 .env
+    set -a; . ./.env; set +a
+    compose up -d --wait hub >/dev/null 2>&1
+    case "$2" in
+      gemini) echo "diagnostico por IA: Gemini, con respaldo en Flash-Lite y en el modelo local" ;;
+      ollama) echo "diagnostico por IA: modelo local (Ollama); ningun dato sale de esta maquina" ;;
+      none)   echo "diagnostico por IA desactivado" ;;
+    esac
+    ;;
   revocar)       compose exec -T hub node apps/hub/src/cli.js agent revoke "$(nodo "${2:-}")" ;;
   logs)          compose logs -f --no-log-prefix "$(agente "${2:-}")" ;;
-  down)          compose down -v --remove-orphans; rm -f .env ;;
-  *)             sed -n '2,16p' "$0"; exit 64 ;;
+  down)
+    compose down -v --remove-orphans
+    # Los secretos generados se descartan; la configuracion de IA (y su clave,
+    # que no se puede regenerar) se conserva para el proximo `up`.
+    if [ -f .env ]; then
+      grep '^MIND_AI_' .env > .env.ia || true
+      chmod 600 .env.ia
+      rm -f .env
+    fi
+    ;;
+  *)             sed -n '2,17p' "$0"; exit 64 ;;
 esac

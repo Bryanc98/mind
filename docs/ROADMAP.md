@@ -38,5 +38,13 @@ explicación.
     migraciones versionadas, tokens por nodo guardados como hash, rate limiting
     por token, *dead man's switch*, cola en disco en el agente y panel de flota.
 
+*   **Etapa 6, adelantada en su núcleo.** Con la detección ya probada contra
+    fallas reales, el diagnóstico por IA dejó de ser prematuro: proveedor
+    intercambiable (Gemini y Ollama) con cadena de respaldo, logs enmascarados
+    en el agente y otra vez en el Hub, agrupación de caídas en cascada en un
+    solo incidente, *cooldown*, techo diario, prompt versionado y pruebas de
+    referencia sobre incidentes reales.
+
 Pendiente de la etapa 2: notificaciones salientes (SMTP) y la vista histórica
-de incidentes.
+de incidentes. Pendiente de la etapa 6: diagnóstico en modo standalone y
+seguimiento de costo por proveedor.

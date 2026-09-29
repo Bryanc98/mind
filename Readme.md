@@ -7,9 +7,9 @@ logs con un modelo de lenguaje y entrega el análisis en español junto con la a
 
 > **Estado: en desarrollo activo.** Funcionan hoy el agente (aplicaciones por su
 > URL, contenedores con reinicios y memoria, y recursos del sistema, con cola en
-> disco), el Hub con PostgreSQL y el panel de la flota.
-> La sanitización de logs, el soporte de Windows y el diagnóstico por IA están
-> planificados; ver [`docs/ROADMAP.md`](docs/ROADMAP.md).
+> disco), el Hub con PostgreSQL, el panel de la flota y el diagnóstico de causa
+> raíz por IA (Gemini u Ollama local) con los logs enmascarados en el nodo. El
+> soporte de Windows está planificado; ver [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -110,8 +110,12 @@ El documento original dejaba abiertas varias alternativas ("Node **o** .NET",
     *   Validar la identidad de los agentes (tokens almacenados con hash, nunca en
         claro).
     *   Recibir telemetría y clasificar el estado de los nodos.
-    *   Consultar al proveedor de IA ante un estado `DOWN`, con deduplicación,
-        *cooldown* por nodo y techo de gasto diario.
+    *   Consultar al proveedor de IA ante un estado `DOWN`. Las caídas que llegan
+        juntas, aunque sean de servidores distintos, forman un solo incidente y un
+        solo diagnóstico: en una falla en cascada, la causa y sus efectos. Con
+        *cooldown* por nodo, techo diario, respuesta validada contra un esquema y
+        cadena de respaldo entre proveedores. Cada diagnóstico guarda exactamente
+        qué datos se enviaron, para auditarlo.
     *   **Dead man's switch:** si un nodo deja de reportar por más de N intervalos,
         eso *es* la alerta. Es lo que resuelve "¿quién vigila al vigilante?".
     *   Distribuir las alertas diagnosticadas.
@@ -152,8 +156,8 @@ mind/
 │   ├── protocol/              # esquema versionado del reporte agente -> Hub
 │   ├── hub-client/            # envío al Hub con cola en disco
 │   ├── collectors-http/       # sondeo de aplicaciones: código y latencia, cero dependencias
-│   ├── sanitizer/             # motor de enmascarado (planificado)
-│   └── ai-provider/           # interfaz de IA: Gemini y Ollama (planificado)
+│   ├── sanitizer/             # enmascarado de credenciales y datos personales
+│   └── ai-provider/           # interfaz de IA: Gemini y Ollama, con cadena de respaldo
 │
 ├── apps/
 │   ├── agent/                 # binario que se despliega en los servidores
@@ -240,6 +244,21 @@ Cada falla tiene una causa real; ninguna cambia lo que el agente reporta:
 
 `tramites` además tiene un ~4% de errores intermitentes que no generan alertas:
 es la máquina de estados filtrando el ruido.
+
+Cada caída dispara un diagnóstico por IA que aparece en el panel. El proveedor se
+cambia en vivo:
+
+```sh
+./deploy/demo/demo.sh ia gemini   # requiere MIND_AI_GEMINI_API_KEY en deploy/demo/.env
+./deploy/demo/demo.sh ia ollama   # modelo local: ningún dato sale de la máquina
+```
+
+La calidad del diagnóstico se mide con incidentes reales de referencia
+(`apps/hub/test/incidentes/`), contra el modelo que se quiera evaluar:
+
+```sh
+MIND_TEST_AI_PROVIDER=ollama MIND_TEST_AI_MODEL=qwen2.5:7b pnpm test:ia
+```
 
 ### Registrar un agente en un Hub
 

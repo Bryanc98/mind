@@ -77,9 +77,23 @@ services:
       MIND_HUB_DATABASE_URL: postgres://mind:${POSTGRES_PASSWORD}@postgres:5432/mind
       MIND_HUB_SWEEP_MS: "2000"
       MIND_HUB_STALE_FACTOR: "3"
+      TZ: America/Santo_Domingo
+      # Diagnostico por IA. Se cambia con ./demo.sh ia <ollama|gemini|none>.
+      MIND_AI_PROVIDER: ${MIND_AI_PROVIDER:-ollama}
+      MIND_AI_MODEL: ${MIND_AI_MODEL:-}
+      # Respaldo si el principal falla: otro modelo de Gemini y luego el local.
+      MIND_AI_FALLBACKS: ${MIND_AI_FALLBACKS:-}
+      # Ollama corre en la maquina anfitriona, fuera de Docker.
+      MIND_AI_OLLAMA_URL: http://host.docker.internal:11434
+      MIND_AI_GEMINI_API_KEY: ${MIND_AI_GEMINI_API_KEY:-}
+      # Tiempos cortos para la demo: agrupa la cascada en 6 s y permite repetir
+      # un escenario al minuto.
+      MIND_AI_DELAY_MS: "6000"
+      MIND_AI_COOLDOWN_MS: "45000"
     depends_on:
       postgres: { condition: service_healthy }
     networks: [ingest, db]
+    extra_hosts: ["host.docker.internal:host-gateway"]
     ports: ["127.0.0.1:8080:8080"]
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
