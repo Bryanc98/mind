@@ -9,6 +9,7 @@ export function createMemoryStore () {
   let samples = []
   let appSamples = []
   let seq = 0
+  const diagnoses = []
 
   return {
     async createAgent ({ node, tokenHash }) {
@@ -28,7 +29,16 @@ export function createMemoryStore () {
     async upsertNode (n) { nodes.set(n.node, structuredClone(n)) },
     listNodes: async () => [...nodes.values()].map((n) => structuredClone(n)),
     async insertEvents (evs) { for (const e of evs) events.push({ id: ++seq, ...e }) },
-    listEvents: async (limit) => events.slice(-limit).reverse(),
+    listEvents: async (limit) => structuredClone(events.slice(-limit).reverse()),
+    listEventsSince: async (since) => structuredClone(events.filter((e) => e.at >= since).sort((a, b) => a.at - b.at)),
+    async createDiagnosis (d) {
+      const id = diagnoses.length + 1
+      diagnoses.push({ id, result: null, error: null, latencyMs: null, context: null, ...structuredClone(d) })
+      return id
+    },
+    async updateDiagnosis (id, d) { Object.assign(diagnoses[id - 1], structuredClone(d)) },
+    listDiagnoses: async (limit) => structuredClone(diagnoses.slice(-limit).reverse()),
+    countDiagnosesSince: async (since) => diagnoses.filter((d) => d.createdAt >= since).length,
     async insertSample (s) { samples.push(s) },
     listSamples: async (since) => samples.filter((s) => s.at >= since).sort((a, b) => a.at - b.at),
     async pruneSamples (before) {

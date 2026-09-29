@@ -101,3 +101,16 @@ describe('lectura y panel', () => {
     assert.match(writes[0], /reports/)
   })
 })
+
+describe('diagnosticos', () => {
+  test('GET /api/v1/diagnoses', async () => {
+    const r = await app.inject('/api/v1/diagnoses?limit=3')
+    assert.equal(r.statusCode, 200)
+    assert.ok(Array.isArray(r.json().diagnoses))
+  })
+
+  test('la lista de eventos del panel no expone los logs', async () => {
+    const r = await app.inject('/api/v1/events')
+    for (const e of r.json().events) assert.equal(e.logs, undefined)
+  })
+})

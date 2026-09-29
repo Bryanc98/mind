@@ -13,7 +13,8 @@
     "test:watch": "node --test --watch --test-reporter=spec packages/*/test/*.test.js apps/*/test/*.test.js",
     "test:core": "node --test --test-reporter=spec packages/agent-core/test/*.test.js",
     "test:os": "node --test --test-reporter=spec packages/collectors-os/test/*.test.js",
-    "agent": "node apps/agent/src/main.js"
+    "agent": "node apps/agent/src/main.js",
+    "test:ia": "node --test --test-reporter=spec apps/hub/test/referencia-ia.test.js"
   },
   "packageManager": "pnpm@12.3.4"
 }

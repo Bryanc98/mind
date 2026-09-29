@@ -47,6 +47,31 @@ function contract (name, open) {
       assert.deepEqual(evs.map((e) => e.at), [2, 1])
     })
 
+    test('eventos con log: se conserva y se filtra por instante', async () => {
+      await store.insertEvents([{ node: 'n9', target: 'container:api', from: 'UP', to: 'DOWN', at: 500, reason: 'x', logs: 'ERROR [correo]' }])
+      const evs = (await store.listEventsSince(500)).filter((e) => e.node === 'n9')
+      assert.equal(evs.length, 1)
+      assert.equal(evs[0].logs, 'ERROR [correo]')
+    })
+
+    test('diagnosticos: se crean pendientes y se completan', async () => {
+      const id = await store.createDiagnosis({
+        createdAt: 1000, status: 'pendiente', provider: 'ollama', model: 'm', promptVersion: 'v1',
+        triggers: [{ node: 'n1', target: 'host', at: 990, reason: 'r' }]
+      })
+      await store.updateDiagnosis(id, { status: 'pendiente', context: { servidores: [] } })
+      await store.updateDiagnosis(id, { status: 'listo', result: { resumen: 'ok' }, error: null, latencyMs: 1234, provider: 'gemini', model: 'g2' })
+      const [d] = await store.listDiagnoses(5)
+      assert.equal(d.status, 'listo')
+      assert.deepEqual(d.result, { resumen: 'ok' })
+      assert.equal(d.latencyMs, 1234)
+      assert.deepEqual([d.provider, d.model], ['gemini', 'g2'], 'el proveedor que respondio reemplaza al previsto')
+      assert.deepEqual(d.context, { servidores: [] }, 'la actualizacion parcial no borra el contexto')
+      assert.equal(d.triggers[0].node, 'n1')
+      assert.equal(await store.countDiagnosesSince(1000), 1)
+      assert.equal(await store.countDiagnosesSince(1001), 0)
+    })
+
     test('muestras: filtro por instante y poda', async () => {
       await store.insertSample({ node: 'n1', at: 10, cpu: 1.5, mem: 2 })
       await store.insertSample({ node: 'n1', at: 20, cpu: 3, mem: 4 })

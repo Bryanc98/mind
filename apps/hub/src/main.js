@@ -8,6 +8,8 @@ import { loadHubConfig } from './config.js'
 import { openStore } from './store/index.js'
 import { createHubService } from './service.js'
 import { buildApp } from './app.js'
+import { createProvider, createChain } from '@mind/ai-provider'
+import { createDiagnoser } from './diagnosis.js'
 
 let cfg
 try {
@@ -23,7 +25,36 @@ try {
 const log = createLogger({ level: cfg.logLevel, base: { svc: 'hub' } })
 
 const store = await openStore(cfg, { logger: log })
-const service = createHubService({ store, staleFactor: cfg.staleFactor })
+// El diagnostico por IA es opcional: sin proveedor, el Hub funciona igual.
+let diagnoser = null
+const service = createHubService({
+  store,
+  staleFactor: cfg.staleFactor,
+  onEvents: (events) => diagnoser?.observe(events)
+})
+if (cfg.ai.provider !== 'none') {
+  const make = (provider, model) => createProvider({
+    provider,
+    model: model ?? undefined,
+    ollamaUrl: cfg.ai.ollamaUrl,
+    geminiApiKey: cfg.ai.geminiApiKey,
+    timeoutMs: cfg.ai.timeoutMs
+  })
+  const provider = createChain([
+    make(cfg.ai.provider, cfg.ai.model),
+    ...cfg.ai.fallbacks.map((f) => make(f.provider, f.model))
+  ])
+  diagnoser = createDiagnoser({
+    store,
+    provider,
+    fleet: () => service.fleet(),
+    logger: log,
+    delayMs: cfg.ai.delayMs,
+    cooldownMs: cfg.ai.cooldownMs,
+    dailyLimit: cfg.ai.dailyLimit
+  })
+  log.info('diagnostico por IA activo', { cadena: provider.chain })
+}
 const app = await buildApp({ service, logLevel: cfg.logLevel, rateLimitPerMin: cfg.rateLimitPerMin })
 
 // El mismo bucle del agente, reutilizado para el dead man's switch.
@@ -43,6 +74,7 @@ for (const signal of ['SIGTERM', 'SIGINT']) {
     shuttingDown = true
     log.info('senal recibida, apagando ordenadamente', { signal })
     await sweeper.stop()
+    await diagnoser?.stop()
     await app.close() // deja de aceptar conexiones y espera las peticiones en curso
     await store.close()
     log.info('hub detenido')

@@ -97,6 +97,10 @@ export async function buildApp ({ service, logLevel = 'info', rateLimitPerMin = 
     schema: { querystring: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 500, default: 50 } } } }
   }, async (req) => ({ events: await service.events(Number(req.query.limit ?? 50)) }))
 
+  app.get('/api/v1/diagnoses', {
+    schema: { querystring: { type: 'object', properties: { limit: { type: 'integer', minimum: 1, maximum: 100, default: 10 } } } }
+  }, async (req) => ({ diagnoses: await service.diagnoses(Number(req.query.limit ?? 10)) }))
+
   app.get('/healthz', async () => ({ status: 'ok' }))
 
   // --- Panel ------------------------------------------------------------------

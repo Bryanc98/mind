@@ -10,9 +10,10 @@ import { hashToken } from './tokens.js'
 export const AGENT_TARGET = 'agente'
 
 /**
- * @param {{ store: object, staleFactor?: number, retentionMs?: number, now?: () => number }} opts
+ * @param {{ store: object, staleFactor?: number, retentionMs?: number, now?: () => number,
+ *   onEvents?: (events: object[]) => void }} opts
  */
-export function createHubService ({ store, staleFactor = 3, retentionMs = 24 * 3600 * 1000, now = Date.now }) {
+export function createHubService ({ store, staleFactor = 3, retentionMs = 24 * 3600 * 1000, now = Date.now, onEvents = () => {} }) {
   return {
     /** @returns {Promise<{ node: string } | null>} */
     async authenticate (token) {
@@ -59,7 +60,10 @@ export function createHubService ({ store, staleFactor = 3, retentionMs = 24 * 3
       }
 
       await store.upsertNode(next)
-      if (events.length) await store.insertEvents(events)
+      if (events.length) {
+        await store.insertEvents(events)
+        onEvents(events)
+      }
       await store.insertSample({ node: report.node, at: report.sentAt, cpu: report.host.cpuPercent, mem: report.host.memPercent })
       const apps = report.targets.filter((t) => t.kind === 'http')
       if (apps.length) {
@@ -92,14 +96,16 @@ export function createHubService ({ store, staleFactor = 3, retentionMs = 24 * 3
         if (!n.silent && t - n.lastSeen > limit) {
           await store.upsertNode({ ...n, silent: true })
           silenced.push(n.node)
-          await store.insertEvents([{
+          const ev = {
             node: n.node,
             target: AGENT_TARGET,
             from: 'UP',
             to: 'DOWN',
             at: t,
             reason: `sin reportes desde hace ${Math.ceil((t - n.lastSeen) / 1000)}s (limite ${Math.round(limit / 1000)}s)`
-          }])
+          }
+          await store.insertEvents([ev])
+          onEvents([ev])
         }
       }
       await store.pruneSamples(t - retentionMs)
@@ -135,6 +141,10 @@ export function createHubService ({ store, staleFactor = 3, retentionMs = 24 * 3
         .sort((a, b) => a.node.localeCompare(b.node))
     },
 
-    events: (limit = 50) => store.listEvents(limit)
+    // La lista de eventos del panel no lleva los logs: son pesados y solo los
+    // necesita el diagnostico.
+    events: async (limit = 50) => (await store.listEvents(limit)).map(({ logs, ...e }) => ({ ...e, hasLogs: Boolean(logs) })),
+
+    diagnoses: (limit = 10) => store.listDiagnoses(limit)
   }
 }

@@ -14,8 +14,10 @@
     "@fastify/rate-limit": "^11.2.0",
     "@fastify/static": "^10.1.5",
     "@mind/agent-core": "workspace:*",
+    "@mind/ai-provider": "workspace:*",
     "@mind/dashboard": "workspace:*",
     "@mind/protocol": "workspace:*",
+    "@mind/sanitizer": "workspace:*",
     "fastify": "^5.12.5",
     "pg": "^8.23.0"
   }
