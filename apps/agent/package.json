@@ -16,6 +16,7 @@
     "@mind/collectors-http": "workspace:*",
     "@mind/collectors-os": "workspace:*",
     "@mind/hub-client": "workspace:*",
-    "@mind/protocol": "workspace:*"
+    "@mind/protocol": "workspace:*",
+    "@mind/sanitizer": "workspace:*"
   }
 }

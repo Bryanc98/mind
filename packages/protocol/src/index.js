@@ -47,7 +47,9 @@ const event = {
     from: { enum: STATUS },
     to: { enum: STATUS },
     at: { type: 'number' },
-    reason: { type: ['string', 'null'], maxLength: 500 }
+    reason: { type: ['string', 'null'], maxLength: 500 },
+    // Ultimas lineas del log del contenedor, enmascaradas en el agente.
+    logs: { type: 'string', maxLength: 8000 }
   }
 }
 

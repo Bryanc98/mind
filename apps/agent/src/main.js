@@ -14,6 +14,7 @@ import { loadConfig, ConfigError, createLogger, createLoop, initialState, nextSt
 import { sampleOs } from '@mind/collectors-os'
 import { createDockerClient, collectContainers, detectRestart } from '@mind/collectors-docker'
 import { collectHttp } from '@mind/collectors-http'
+import { sanitizeLog } from '@mind/sanitizer'
 import { buildReport } from '@mind/protocol'
 import { createDiskQueue, createHubClient } from '@mind/hub-client'
 import pkg from '../package.json' with { type: 'json' }
@@ -138,6 +139,23 @@ async function tick () {
     if (!targets.has(id)) targets.set(id, { kind: 'http', name: c.name, health: initialState(), detail: null })
     const ev = evaluate(id, targets.get(id), c.ok, c.detail, now, { latencyMs: c.latencyMs, httpStatus: c.httpStatus })
     if (ev) events.push(ev)
+  }
+
+  // Contexto para el diagnostico: cuando un contenedor o una aplicacion empeora,
+  // se adjuntan las ultimas lineas del log del contenedor que la sirve. Se
+  // enmascaran AQUI, antes de salir del nodo; el log original nunca se envia.
+  // Solo en transiciones a DEGRADED o DOWN: una lectura por incidente, no por ciclo.
+  if (docker) {
+    await Promise.all(events.map(async (ev) => {
+      if (ev.to !== 'DEGRADED' && ev.to !== 'DOWN') return
+      const name = ev.target.replace(/^(container|http):/, '')
+      if (ev.target === HOST_ID || !targets.has(`container:${name}`)) return
+      try {
+        ev.logs = sanitizeLog(await docker.logs(name, { tail: 40 }), { maxLines: 25 })
+      } catch (err) {
+        log.debug('no se pudo leer el log del contenedor', { contenedor: name, err: err.message })
+      }
+    }))
   }
 
   const host = targets.get(HOST_ID).health
