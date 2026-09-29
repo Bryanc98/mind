@@ -1,7 +1,10 @@
 import { describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import os from 'node:os'
-import { readCpuTimes, cpuUsagePercent, readMemory, sampleOs } from '../src/index.js'
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { readCpuTimes, cpuUsagePercent, readMemory, sampleOs, readCgroup, cgroupCpuPercent } from '../src/index.js'
 
 describe('cpuUsagePercent - la derivada', () => {
   // Las lecturas son sinteticas. Al ser una funcion pura se pueden probar
@@ -125,5 +128,64 @@ describe('sampleOs - integracion', () => {
     const t0 = Date.now()
     await sampleOs({ sampleMs: 100 })
     assert.ok(Date.now() - t0 >= 95, 'sampleOs debe esperar sampleMs entre lecturas')
+  })
+})
+
+describe('cgroup v2 - limites del contenedor', () => {
+  // Dentro de un contenedor, node:os ve la maquina anfitriona. Las pruebas usan
+  // un directorio falso con la misma estructura que /sys/fs/cgroup.
+  function fakeCgroup (files) {
+    const dir = mkdtempSync(join(tmpdir(), 'mind-cg-'))
+    for (const [name, content] of Object.entries(files)) writeFileSync(join(dir, name), content)
+    return dir
+  }
+
+  test('sin archivos de cgroup devuelve null (VM o servidor fisico)', () => {
+    const dir = fakeCgroup({})
+    assert.equal(readCgroup(dir), null)
+    rmSync(dir, { recursive: true })
+  })
+
+  test('sin limites devuelve null: las lecturas del host son las correctas', () => {
+    const dir = fakeCgroup({ 'memory.max': 'max\n', 'cpu.max': 'max 100000\n' })
+    assert.equal(readCgroup(dir), null)
+    rmSync(dir, { recursive: true })
+  })
+
+  test('lee el limite de memoria y descuenta la cache inactiva', () => {
+    const dir = fakeCgroup({
+      'memory.max': '268435456\n',
+      'memory.current': '200000000\n',
+      'memory.stat': 'anon 150000000\ninactive_file 50000000\nactive_file 1\n',
+      'cpu.max': '50000 100000\n',
+      'cpu.stat': 'usage_usec 123456\nuser_usec 1\n'
+    })
+    const cg = readCgroup(dir)
+    assert.equal(cg.memMaxBytes, 268435456)
+    assert.equal(cg.memUsedBytes, 150000000, 'la cache de paginas no es memoria comprometida')
+    assert.equal(cg.cpuLimitCores, 0.5)
+    assert.equal(cg.cpuUsageUsec, 123456)
+    rmSync(dir, { recursive: true })
+  })
+
+  test('la CPU se mide contra la cuota, no contra el host', () => {
+    // Medio nucleo consumido con cuota de medio nucleo: 100%.
+    assert.equal(cgroupCpuPercent(500_000, 1_000_000, 0.5), 100)
+    assert.equal(cgroupCpuPercent(250_000, 1_000_000, 0.5), 50)
+    assert.equal(cgroupCpuPercent(0, 0, 0.5), 0, 'intervalo cero no produce NaN')
+    assert.equal(cgroupCpuPercent(900_000, 1_000_000, 0.5), 100, 'se acota a 100')
+  })
+
+  test('sampleOs usa el cgroup cuando hay limite de memoria', async () => {
+    const dir = fakeCgroup({
+      'memory.max': '1000\n',
+      'memory.current': '900\n',
+      'memory.stat': 'inactive_file 400\n'
+    })
+    const s = await sampleOs({ sampleMs: 10, cgroupRoot: dir })
+    assert.equal(s.scope, 'cgroup')
+    assert.equal(s.memory.totalBytes, 1000)
+    assert.equal(s.memory.usedPercent, 50)
+    rmSync(dir, { recursive: true })
   })
 })
