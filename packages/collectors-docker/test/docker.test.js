@@ -4,7 +4,7 @@ import http from 'node:http'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { containerCheck, createDockerClient, collectContainers, parseDockerHost, detectRestart, memoryPercent } from '../src/index.js'
+import { containerCheck, createDockerClient, collectContainers, parseDockerHost, detectRestart, memoryPercent, demuxLogs } from '../src/index.js'
 
 const inspect = (state, extra = {}) => ({
   Id: 'abcdef0123456789',
@@ -111,6 +111,25 @@ describe('memoryPercent', () => {
   test('sin datos -> null, no NaN', () => {
     assert.equal(memoryPercent({ memory_stats: {} }), null)
     assert.equal(memoryPercent(null), null)
+  })
+})
+
+describe('demuxLogs', () => {
+  const frame = (stream, text) => {
+    const payload = Buffer.from(text)
+    const header = Buffer.alloc(8)
+    header[0] = stream
+    header.writeUInt32BE(payload.length, 4)
+    return Buffer.concat([header, payload])
+  }
+
+  test('separa las tramas de stdout y stderr en orden', () => {
+    const buf = Buffer.concat([frame(1, 'inicio\n'), frame(2, 'ERROR fallo\n'), frame(1, 'fin\n')])
+    assert.equal(demuxLogs(buf), 'inicio\nERROR fallo\nfin\n')
+  })
+
+  test('texto plano (contenedor con TTY) pasa tal cual', () => {
+    assert.equal(demuxLogs(Buffer.from('hola mundo\n')), 'hola mundo\n')
   })
 })
 

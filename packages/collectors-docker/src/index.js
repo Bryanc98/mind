@@ -22,17 +22,19 @@ import http from 'node:http'
 export function createDockerClient (dockerHost, { timeoutMs = 5000 } = {}) {
   const target = parseDockerHost(dockerHost)
 
-  function get (path, { raw = false } = {}) {
+  function get (path, { raw = false, binary = false } = {}) {
     return new Promise((resolve, reject) => {
       const req = http.request({ ...target, path, method: 'GET', timeout: timeoutMs }, (res) => {
-        let body = ''
-        res.setEncoding('utf8')
-        res.on('data', (chunk) => { body += chunk })
+        const chunks = []
+        res.on('data', (chunk) => { chunks.push(chunk) })
         res.on('end', () => {
+          const buf = Buffer.concat(chunks)
           if (res.statusCode !== 200) {
-            reject(new Error(`docker ${path} respondio ${res.statusCode}: ${body.slice(0, 200)}`))
+            reject(new Error(`docker ${path} respondio ${res.statusCode}: ${buf.toString('utf8').slice(0, 200)}`))
             return
           }
+          if (binary) { resolve(buf); return }
+          const body = buf.toString('utf8')
           if (raw) { resolve(body); return }
           try { resolve(JSON.parse(body)) } catch (err) { reject(err) }
         })
@@ -53,6 +55,14 @@ export function createDockerClient (dockerHost, { timeoutMs = 5000 } = {}) {
     // la API hace por defecto (~1 s por contenedor).
     stats: (id) => get(`/containers/${encodeURIComponent(id)}/stats?stream=false&one-shot=true`),
     /**
+     * Ultimas lineas del log de un contenedor, stdout y stderr intercalados.
+     * Se devuelven en crudo: quien las envie fuera del nodo debe enmascararlas.
+     */
+    async logs (id, { tail = 30 } = {}) {
+      const buf = await get(`/containers/${encodeURIComponent(id)}/logs?stdout=1&stderr=1&tail=${tail}`, { binary: true })
+      return demuxLogs(buf)
+    },
+    /**
      * Muertes de contenedores (die, oom) en un intervalo cerrado. Con `until`
      * la API responde y cierra en lugar de quedarse transmitiendo.
      */
@@ -62,6 +72,27 @@ export function createDockerClient (dockerHost, { timeoutMs = 5000 } = {}) {
       return body.split('\n').filter(Boolean).map((l) => JSON.parse(l))
     }
   }
+}
+
+/**
+ * Separa el flujo multiplexado de `docker logs` de un contenedor sin TTY: cada
+ * trama lleva 8 bytes de cabecera (tipo de flujo, 3 de relleno, longitud en
+ * big-endian) y luego el contenido. Un contenedor con TTY envia texto plano, lo
+ * que se detecta porque el primer byte no es un tipo de flujo valido.
+ *
+ * @param {Buffer} buf
+ * @returns {string}
+ */
+export function demuxLogs (buf) {
+  if (buf.length < 8 || buf[0] > 2 || buf[1] !== 0 || buf[2] !== 0 || buf[3] !== 0) return buf.toString('utf8')
+  const parts = []
+  let i = 0
+  while (i + 8 <= buf.length) {
+    const size = buf.readUInt32BE(i + 4)
+    parts.push(buf.subarray(i + 8, i + 8 + size))
+    i += 8 + size
+  }
+  return Buffer.concat(parts).toString('utf8')
 }
 
 export function parseDockerHost (dockerHost) {
