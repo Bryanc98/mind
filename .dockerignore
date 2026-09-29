@@ -1,0 +1,11 @@
+**/node_modules
+**/test
+**/data
+.git
+.labs
+docs
+deploy
+*.md
+!Readme.md
+.env
+**/.env

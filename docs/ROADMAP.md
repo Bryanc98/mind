@@ -24,6 +24,19 @@ explicación.
 
 ## Etapa actual
 
-La etapa 0 está en curso. El agente ya valida su configuración, emite telemetría
-estructurada y responde a las señales del sistema; la máquina de estados, el
-colector de sistema operativo y el bucle de ejecución están en desarrollo.
+**Etapas 0 y 1 completas; núcleo de la etapa 2 funcional.**
+
+*   **Etapa 0.** Configuración con validación estricta, máquina de estados de
+    umbrales asimétricos, telemetría NDJSON, apagado ordenado y unidad de
+    systemd endurecida ([`deploy/systemd/`](../deploy/systemd/mind-agent.service)).
+*   **Etapa 1.** Imágenes multi-etapa sin root, métricas contra los límites de
+    cgroup v2, colector de contenedores sobre la Engine API detrás de un proxy
+    de solo lectura (estado, memoria, reinicios y su causa), sondeo de
+    aplicaciones por HTTP (código y latencia), y entorno completo con
+    `docker compose` que simula varios servidores con fallas reales.
+*   **Etapa 2.** Hub en Fastify con validación por esquema, PostgreSQL con
+    migraciones versionadas, tokens por nodo guardados como hash, rate limiting
+    por token, *dead man's switch*, cola en disco en el agente y panel de flota.
+
+Pendiente de la etapa 2: notificaciones salientes (SMTP) y la vista histórica
+de incidentes.

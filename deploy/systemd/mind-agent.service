@@ -1,0 +1,42 @@
+[Unit]
+Description=M.I.N.D. Agent
+After=network-online.target
+Wants=network-online.target
+# Tope de reinicios: 5 intentos en 5 minutos y systemd deja de insistir.
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=mind
+Group=mind
+EnvironmentFile=/etc/mind/agent.env
+ExecStart=/usr/bin/node /opt/mind/apps/agent/src/main.js
+
+# Se reinicia ante caidas, no ante una salida limpia (0) ni ante una
+# configuracion invalida (78, EX_CONFIG): reintentar no la corrige.
+Restart=on-failure
+RestartSec=5s
+RestartPreventExitStatus=78
+
+# SIGTERM dispara el apagado ordenado; se deja margen para el tick en vuelo
+# antes de recurrir a SIGKILL.
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+# Endurecimiento. El agente solo lee /proc y escribe a stdout.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

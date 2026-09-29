@@ -5,8 +5,11 @@ agente corre en un Debian con Docker y en un Windows Server 2012 con IIS, sin ab
 un solo puerto de escucha. Cuando algo se cae, diagnostica la causa raíz leyendo los
 logs con un modelo de lenguaje y entrega el análisis en español junto con la alerta.
 
-> **Estado: en desarrollo activo.** El agente y el Hub se construyen por etapas;
-> ver [`docs/ROADMAP.md`](docs/ROADMAP.md) para el alcance de cada una.
+> **Estado: en desarrollo activo.** Funcionan hoy el agente (aplicaciones por su
+> URL, contenedores con reinicios y memoria, y recursos del sistema, con cola en
+> disco), el Hub con PostgreSQL y el panel de la flota.
+> La sanitización de logs, el soporte de Windows y el diagnóstico por IA están
+> planificados; ver [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ---
 
@@ -81,10 +84,16 @@ El documento original dejaba abiertas varias alternativas ("Node **o** .NET",
     *   **Sistema operativo:** CPU y RAM. El uso de CPU se calcula como derivada de
         los contadores acumulados del kernel, no como lectura instantánea
         (`packages/collectors-os`).
-    *   **Contenedores:** estado vía `docker inspect`. Sirve para servicios en .NET,
-        Node o Laravel indistintamente.
-    *   **HTTP activo:** ping a URLs para apps tradicionales (por ejemplo portales
-        en WordPress) y extracción del `error_log` ante un 500 o un timeout.
+    *   **Contenedores:** estado vía la Engine API (lo mismo que `docker inspect`),
+        memoria contra el límite del contenedor, y reinicios con su causa (OOM o
+        código de salida): un contenedor que Docker reinicia en un segundo se ve
+        "running", pero se cayó. Sirve para servicios en .NET, Node o Laravel
+        indistintamente.
+    *   **Aplicaciones por HTTP:** código de respuesta y latencia de cada URL. Es
+        la señal más cercana a lo que ve el usuario, y la misma para una app en
+        contenedor, en IIS o en Apache: un contenedor `healthy` puede estar
+        devolviendo 500. La extracción del `error_log` ante un 500 o un timeout
+        está planificada.
     *   **Máquina de estados:** `UNKNOWN → UP → DEGRADED → DOWN` con umbrales
         asimétricos: bajar de estado exige fallos consecutivos, recuperarse
         ocurre con un solo éxito. Evita la fatiga de alertas.
@@ -138,16 +147,23 @@ El documento original dejaba abiertas varias alternativas ("Node **o** .NET",
 mind/
 ├── packages/
 │   ├── agent-core/            # config, máquina de estados, bucle, logger
-│   ├── collectors-os/         # CPU y RAM sobre node:os, cero dependencias
-│   ├── collectors-docker/     # estado de contenedores (planificado)
-│   ├── collectors-http/       # sondeo de endpoints (planificado)
+│   ├── collectors-os/         # CPU y RAM sobre node:os y cgroup v2, cero dependencias
+│   ├── collectors-docker/     # estado de contenedores vía Engine API, cero dependencias
+│   ├── protocol/              # esquema versionado del reporte agente -> Hub
+│   ├── hub-client/            # envío al Hub con cola en disco
+│   ├── collectors-http/       # sondeo de aplicaciones: código y latencia, cero dependencias
 │   ├── sanitizer/             # motor de enmascarado (planificado)
 │   └── ai-provider/           # interfaz de IA: Gemini y Ollama (planificado)
 │
 ├── apps/
 │   ├── agent/                 # binario que se despliega en los servidores
-│   ├── hub/                   # API Fastify (planificado)
-│   └── dashboard/             # panel Vue 3 (planificado)
+│   ├── hub/                   # API Fastify + PostgreSQL + dead man's switch
+│   └── dashboard/             # panel Vue 3 que sirve el propio Hub
+│
+├── deploy/
+│   ├── docker/                # imágenes multi-etapa sin root
+│   ├── systemd/               # unidad endurecida del agente
+│   └── demo/                  # entorno completo con docker compose
 │
 └── docs/
     ├── ROADMAP.md             # alcance por etapas
@@ -195,6 +211,42 @@ pnpm agent
 
 El agente escribe NDJSON a `stdout`. Un supervisor como systemd captura esa
 salida directamente, sin que el proceso gestione archivos de log ni rotación.
+
+### Entorno completo con Docker
+
+[`deploy/demo/`](deploy/demo) simula tres servidores, cada uno con su agente y
+sus aplicaciones, más un Hub y tráfico constante de usuarios. Genera tokens
+aleatorios en un `.env` local y registra los agentes en el Hub.
+
+| Servidor | Qué corre |
+|---|---|
+| `web-01` | Host Docker: `portal` (nginx), `tramites` (API) y `reportes` |
+| `app-01` | `consultas`, instalada directo en el servidor, sin contenedor: solo se ve por su URL |
+| `db-01`  | La base de datos de `tramites` |
+
+Cada falla tiene una causa real; ninguna cambia lo que el agente reporta:
+
+```sh
+./deploy/demo/demo.sh up              # panel en http://localhost:8080
+./deploy/demo/demo.sh fuga            # fuga de memoria en reportes -> OOM -> bucle de reinicios
+./deploy/demo/demo.sh carga           # 80 usuarios concurrentes: consultas se vuelve lenta
+./deploy/demo/demo.sh apagar db       # db-01 cae; tramites, en otro servidor, responde 503
+./deploy/demo/demo.sh cortar app      # corta la red; los reportes esperan en disco
+./deploy/demo/demo.sh restaurar app   # se reenvían en orden
+./deploy/demo/demo.sh puertos         # 0 sockets de escucha en los agentes
+./deploy/demo/demo.sh reset           # todo sano otra vez
+./deploy/demo/demo.sh down
+```
+
+`tramites` además tiene un ~4% de errores intermitentes que no generan alertas:
+es la máquina de estados filtrando el ruido.
+
+### Registrar un agente en un Hub
+
+```sh
+mind-hub agent add web-01      # imprime el token una sola vez; el Hub guarda su hash
+mind-hub agent revoke web-01   # corta el acceso de ese nodo de inmediato
+```
 
 ## Seguridad
 

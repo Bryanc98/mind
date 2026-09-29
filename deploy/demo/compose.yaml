@@ -1,0 +1,211 @@
+# Entorno de demostracion: tres servidores simulados, cada uno con su agente y
+# sus aplicaciones, un Hub y trafico constante. Las fallas se provocan con
+# ./demo.sh y todas tienen una causa real (fuga de memoria, carga, un servidor
+# apagado); ninguna es un interruptor que cambie lo que el agente reporta.
+#
+#   web-01  host Docker: portal (nginx), tramites (API), reportes
+#   app-01  aplicacion instalada directo en el servidor, sin contenedor propio
+#   db-01   base de datos de tramites
+#
+# Redes separadas por funcion: `lan` es la red entre servidores; los agentes
+# llegan al Hub por `ingest`; la base del Hub y el proxy de Docker son internas.
+# El unico puerto publicado es el del panel.
+
+name: mind-demo
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+
+x-agent: &agent
+  <<: *hardening
+  image: mind-agent:dev
+  build:
+    context: ../..
+    dockerfile: deploy/docker/agent.Dockerfile
+  depends_on:
+    hub: { condition: service_healthy }
+  # Limites del contenedor: el agente mide CPU y memoria contra ellos (cgroup).
+  cpus: 0.5
+  mem_limit: 128m
+
+x-agent-env: &agent-env
+  MIND_HUB_URL: http://hub:8080
+  MIND_INTERVAL_MS: "2000"
+  MIND_FAILURES_TO_DEGRADE: "2"
+  MIND_FAILURES_TO_DOWN: "4"
+  MIND_CPU_WARN: "80"
+  MIND_MEM_WARN: "90"
+  MIND_HTTP_SLOW_MS: "1000"
+  MIND_HTTP_TIMEOUT_MS: "1800"
+
+x-app: &app
+  <<: *hardening
+  image: mind-demo-apps:dev
+  build: ./apps
+  networks: [lan]
+  healthcheck:
+    test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+    interval: 3s
+    retries: 2
+
+services:
+  # --- Hub ------------------------------------------------------------------
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: mind
+      POSTGRES_USER: mind
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?ejecuta ./demo.sh up}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    networks: [db]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mind -d mind"]
+      interval: 2s
+      retries: 20
+    restart: unless-stopped
+
+  hub:
+    <<: *hardening
+    image: mind-hub:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/hub.Dockerfile
+    environment:
+      MIND_HUB_DATABASE_URL: postgres://mind:${POSTGRES_PASSWORD}@postgres:5432/mind
+      MIND_HUB_SWEEP_MS: "2000"
+      MIND_HUB_STALE_FACTOR: "3"
+    depends_on:
+      postgres: { condition: service_healthy }
+    networks: [ingest, db]
+    ports: ["127.0.0.1:8080:8080"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/healthz').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 2s
+      retries: 20
+
+  # Proxy del socket de Docker que solo permite leer contenedores. Montar el
+  # socket directamente en el agente equivaldria a darle root en el anfitrion.
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    environment:
+      CONTAINERS: 1
+      POST: 0
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    networks: [docker-api]
+    restart: unless-stopped
+
+  # --- Servidor web-01: host Docker ---------------------------------------------
+  agent-web:
+    <<: *agent
+    hostname: web-01
+    environment:
+      <<: *agent-env
+      MIND_NODE_NAME: web-01
+      MIND_SERVER_TOKEN: ${TOKEN_WEB:?ejecuta ./demo.sh up}
+      MIND_DOCKER_HOST: tcp://socket-proxy:2375
+      MIND_DOCKER_LABEL: mind.server=web-01
+      MIND_HTTP_TARGETS: portal=http://portal/,tramites=http://tramites:3000/,reportes=http://reportes:3000/
+    networks: [ingest, docker-api, lan]
+    volumes: [buffer-web:/var/lib/mind]
+
+  portal:
+    <<: *hardening
+    image: nginx:alpine
+    container_name: portal
+    labels: ["mind.server=web-01"]
+    # nginx necesita escribir su cache y su pid.
+    read_only: false
+    cap_drop: []
+    networks: [lan]
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 3s
+      retries: 2
+
+  tramites:
+    <<: *app
+    container_name: tramites
+    command: ["node", "tramites.js"]
+    labels: ["mind.server=web-01"]
+    environment:
+      DB_HOST: db-tramites
+
+  reportes:
+    <<: *app
+    container_name: reportes
+    command: ["node", "reportes.js"]
+    labels: ["mind.server=web-01"]
+    # Limite bajo a proposito: la fuga lo alcanza en unos segundos.
+    mem_limit: 96m
+    # Sin swap: el limite es real y la fuga termina en OOM, no en disco.
+    memswap_limit: 96m
+
+  # --- Servidor app-01: aplicacion sin contenedor propio -------------------------
+  # La aplicacion corre como un proceso mas del servidor, junto al agente, y
+  # solo se observa por su URL: el mismo caso que un sitio en IIS.
+  agent-app:
+    <<: *agent
+    hostname: app-01
+    entrypoint: ["sh", "-c", "node /demo-apps/consultas.js & exec node apps/agent/src/main.js"]
+    environment:
+      <<: *agent-env
+      MIND_NODE_NAME: app-01
+      MIND_SERVER_TOKEN: ${TOKEN_APP:?ejecuta ./demo.sh up}
+      MIND_HTTP_TARGETS: consultas=http://127.0.0.1:8081/
+    networks: [ingest, lan]
+    volumes:
+      - buffer-app:/var/lib/mind
+      - ./apps:/demo-apps:ro
+
+  # --- Servidor db-01: base de datos de tramites -------------------------------
+  agent-db:
+    <<: *agent
+    hostname: db-01
+    environment:
+      <<: *agent-env
+      MIND_NODE_NAME: db-01
+      MIND_SERVER_TOKEN: ${TOKEN_DB:?ejecuta ./demo.sh up}
+      MIND_DOCKER_HOST: tcp://socket-proxy:2375
+      MIND_DOCKER_LABEL: mind.server=db-01
+    networks: [ingest, docker-api]
+    volumes: [buffer-db:/var/lib/mind]
+
+  db-tramites:
+    image: postgres:17-alpine
+    container_name: db-tramites
+    labels: ["mind.server=db-01"]
+    environment:
+      POSTGRES_DB: tramites
+      POSTGRES_USER: tramites
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    networks: [lan]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tramites -d tramites"]
+      interval: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # --- Usuarios ------------------------------------------------------------------
+  # Trafico constante hacia todas las aplicaciones, como el de usuarios reales.
+  trafico:
+    <<: *hardening
+    image: mind-demo-apps:dev
+    command: ["node", "trafico.js"]
+    environment:
+      TARGETS: http://portal/,http://tramites:3000/,http://reportes:3000/,http://agent-app:8081/
+    networks: [lan]
+
+networks:
+  ingest: {}
+  lan: {}
+  db: { internal: true }
+  docker-api: { internal: true }
+
+volumes:
+  pgdata: {}
+  buffer-web: {}
+  buffer-app: {}
+  buffer-db: {}
