@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>M.I.N.D. — Flota</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Ccircle cx='8' cy='8' r='6' fill='%2322c55e'/%3E%3C/svg%3E">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+  <div id="app" v-cloak>
+    <header class="top">
+      <div class="brand">
+        <span class="logo">M.I.N.D.</span>
+        <span class="sub">Monitor Inteligente de Nodos y Despliegues</span>
+      </div>
+      <div class="summary">
+        <span class="chip" v-for="s in summary" :key="s.status" :class="s.status">{{ s.count }} {{ s.count === 1 ? 'nodo' : 'nodos' }} {{ plural(s.status, s.count) }}</span>
+        <span v-if="servicesFailing" class="chip DOWN">{{ servicesFailing }} {{ servicesFailing === 1 ? 'aplicación o servicio' : 'aplicaciones o servicios' }} con fallas</span>
+        <span class="conn" :class="{ off: !connected }">{{ connected ? 'actualizado ' + clock(updatedAt) : 'Hub sin respuesta' }}</span>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section class="fleet">
+        <p v-if="!nodes.length" class="empty">Esperando el primer reporte de un agente…</p>
+
+        <article v-for="n in nodes" :key="n.node" class="node" :class="[n.status, { silent: n.silent }]">
+          <header>
+            <h2>{{ n.node }}</h2>
+            <span class="pills">
+              <span v-if="failing(n)" class="pill outline" :class="worst(n)">{{ failing(n) }} con fallas</span>
+              <span class="pill" :class="n.status">{{ label(n.status) }}</span>
+            </span>
+          </header>
+
+          <p v-if="n.silent" class="silence">Sin reportes hace {{ ago(n.secondsSinceLastSeen) }}. Último estado conocido abajo.</p>
+          <p v-else class="meta">
+            último reporte hace {{ ago(n.secondsSinceLastSeen) }} · cada {{ n.intervalMs / 1000 }}s · agente {{ n.agentVersion }}
+            <span v-if="n.host.scope === 'cgroup'" class="tag" title="Métricas medidas contra el límite del contenedor, no contra el anfitrión">cgroup</span>
+          </p>
+
+          <div class="metrics">
+            <div class="metric">
+              <div class="row"><span>CPU</span><b>{{ n.host.cpuPercent.toFixed(1) }}%</b></div>
+              <div class="bar"><i :class="level(n.host.cpuPercent)" :style="{ width: n.host.cpuPercent + '%' }"></i></div>
+            </div>
+            <div class="metric">
+              <div class="row"><span>Memoria</span><b>{{ n.host.memPercent.toFixed(1) }}%</b></div>
+              <div class="bar"><i :class="level(n.host.memPercent)" :style="{ width: n.host.memPercent + '%' }"></i></div>
+            </div>
+          </div>
+
+          <svg class="spark" viewBox="0 0 200 40" preserveAspectRatio="none" role="img" :aria-label="'CPU y memoria de ' + n.node + ' en los últimos 10 minutos'">
+            <polyline class="mem" :points="spark(n.history, 'mem')" />
+            <polyline class="cpu" :points="spark(n.history, 'cpu')" />
+          </svg>
+          <div class="legend"><span class="cpu">CPU</span><span class="mem">Memoria</span><span>últimos 10 min</span></div>
+
+          <div v-if="n.apps.length" class="apps">
+            <h4>Aplicaciones</h4>
+            <div v-for="a in n.apps" :key="a.id" class="app" :class="a.status">
+              <div class="app-row">
+                <span class="dot"></span>
+                <span class="cname">{{ a.name }}</span>
+                <span class="latency">{{ a.latencyMs != null ? a.latencyMs + ' ms' : '—' }}</span>
+              </div>
+              <div class="cdetail">{{ a.detail }}</div>
+              <svg class="lat" viewBox="0 0 200 24" preserveAspectRatio="none" role="img" :aria-label="'Latencia de ' + a.name + ' en los últimos 10 minutos'">
+                <polyline :points="latencyLine(a.history)" />
+                <rect v-for="(f, i) in latencyFailures(a.history)" :key="i" :x="f" y="0" width="2" height="24" class="fail" />
+              </svg>
+            </div>
+          </div>
+
+          <h4 v-if="n.containers.length" class="sub-h">Contenedores</h4>
+          <ul v-if="n.containers.length" class="containers">
+            <li v-for="c in n.containers" :key="c.id" :class="c.status">
+              <span class="dot"></span>
+              <span class="cname">{{ c.name }}</span>
+              <span class="cdetail">{{ c.detail }}</span>
+              <span class="cmem" :class="c.memPercent != null ? level(c.memPercent) : ''">{{ memLabel(c) }}</span>
+            </li>
+          </ul>
+        </article>
+      </section>
+
+      <aside class="events">
+        <h3>Cambios de estado</h3>
+        <p v-if="!events.length" class="empty">Sin eventos todavía.</p>
+        <ol>
+          <li v-for="e in events" :key="e.id">
+            <time>{{ clock(e.at) }}</time>
+            <div>
+              <b>{{ e.node }}</b> · {{ e.target }}
+              <div class="transition">
+                <span class="pill small" :class="e.from">{{ label(e.from) }}</span> →
+                <span class="pill small" :class="e.to">{{ label(e.to) }}</span>
+              </div>
+              <div v-if="e.reason" class="reason">{{ e.reason }}</div>
+            </div>
+          </li>
+        </ol>
+      </aside>
+    </main>
+  </div>
+</body>
+</html>

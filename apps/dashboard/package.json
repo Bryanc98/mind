@@ -1,0 +1,14 @@
+{
+  "name": "@mind/dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js"
+  },
+  "dependencies": {
+    "vue": "^3.5.43"
+  }
+}
