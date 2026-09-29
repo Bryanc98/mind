@@ -28,7 +28,10 @@ const LOG_LEVELS = ["debug", "info", "warn", "error"];
  *   nodeName: string, intervalMs: number, logLevel: string,
  *   cpuWarn: number, memWarn: number,
  *   failuresToDegrade: number, failuresToDown: number,
- *   hubUrl: string|null, mode: 'standalone'|'hub'
+ *   hubUrl: string|null, serverToken: string|null, mode: 'standalone'|'hub',
+ *   dockerHost: string|null, dockerLabel: string|null, bufferDir: string,
+ *   bufferMax: number, httpTargets: {name: string, url: string}[],
+ *   httpTimeoutMs: number, httpSlowMs: number
  * }>}
  */
 export function loadConfig(env = process.env) {
@@ -93,6 +96,53 @@ export function loadConfig(env = process.env) {
     return value;
   };
 
+  // Mismo formato que DOCKER_HOST: unix:///ruta/al/socket o tcp://host:puerto.
+  const readDockerHost = (key) => {
+    const value = raw(key);
+    if (value === undefined) return null;
+    if (!/^unix:\/\/\/.+/.test(value) && !/^tcp:\/\/[^/]+:\d+\/?$/.test(value)) {
+      problems.push(`${key}="${value}" debe tener la forma unix:///ruta o tcp://host:puerto`);
+      return null;
+    }
+    return value;
+  };
+
+  // Aplicaciones a sondear: nombre=url,nombre=url. Cada una tiene su propia
+  // maquina de estados, igual que un contenedor.
+  const readHttpTargets = (key) => {
+    const value = raw(key);
+    if (value === undefined) return [];
+    const targets = [];
+    const seen = new Set();
+    for (const part of value.split(",").map((s) => s.trim()).filter(Boolean)) {
+      const i = part.indexOf("=");
+      const name = i > 0 ? part.slice(0, i).trim() : "";
+      const url = i > 0 ? part.slice(i + 1).trim() : "";
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name)) {
+        problems.push(`${key}: "${part}" debe tener la forma nombre=url`);
+        continue;
+      }
+      let parsed;
+      try { parsed = new URL(url); } catch {}
+      if (!parsed || (parsed.protocol !== "http:" && parsed.protocol !== "https:")) {
+        problems.push(`${key}: ${name}="${url}" no es una URL http/https`);
+        continue;
+      }
+      if (parsed.username || parsed.password) {
+        // Una credencial en la URL terminaria en los logs y en el Hub.
+        problems.push(`${key}: ${name} no puede llevar usuario ni contrasena en la URL`);
+        continue;
+      }
+      if (seen.has(name)) {
+        problems.push(`${key}: el nombre ${name} esta repetido`);
+        continue;
+      }
+      seen.add(name);
+      targets.push(Object.freeze({ name, url }));
+    }
+    return targets;
+  };
+
   const nodeName = raw("MIND_NODE_NAME");
   if (!nodeName) problems.push("MIND_NODE_NAME es obligatorio");
 
@@ -112,8 +162,30 @@ export function loadConfig(env = process.env) {
   });
   const logLevel = readEnum("MIND_LOG_LEVEL", "info", LOG_LEVELS);
   const hubUrl = readUrl("MIND_HUB_URL");
+  const serverToken = raw("MIND_SERVER_TOKEN") ?? null;
+  const dockerHost = readDockerHost("MIND_DOCKER_HOST");
+  const dockerLabel = raw("MIND_DOCKER_LABEL") ?? null;
+  const bufferDir = raw("MIND_BUFFER_DIR") ?? "./data";
+  const bufferMax = readNumber("MIND_BUFFER_MAX", 5000, { min: 1, integer: true });
+  const httpTargets = readHttpTargets("MIND_HTTP_TARGETS");
+  const httpTimeoutMs = readNumber("MIND_HTTP_TIMEOUT_MS", 5000, { min: 100, integer: true });
+  const httpSlowMs = readNumber("MIND_HTTP_SLOW_MS", 2000, { min: 1, integer: true });
+  if (httpSlowMs >= httpTimeoutMs) {
+    problems.push(
+      `MIND_HTTP_SLOW_MS (${httpSlowMs}) debe ser menor que MIND_HTTP_TIMEOUT_MS (${httpTimeoutMs}), ` +
+      `o una respuesta lenta se reportaria como timeout`
+    );
+  }
 
-  
+  // Un agente en modo hub sin credencial fallaria en cada envio con 401 y
+  // llenaria el buffer sin que nadie lo note. Se detecta al arrancar.
+  if (hubUrl && !serverToken) {
+    problems.push("MIND_SERVER_TOKEN es obligatorio cuando MIND_HUB_URL esta definida");
+  }
+  if (serverToken && serverToken.length < 32) {
+    problems.push("MIND_SERVER_TOKEN es demasiado corto (minimo 32 caracteres)");
+  }
+
   if (failuresToDown <= failuresToDegrade) {
     problems.push(
       `MIND_FAILURES_TO_DOWN (${failuresToDown}) debe ser mayor que ` +
@@ -132,6 +204,14 @@ export function loadConfig(env = process.env) {
     failuresToDegrade,
     failuresToDown,
     hubUrl,
+    serverToken,
+    dockerHost,
+    dockerLabel,
+    bufferDir,
+    bufferMax,
+    httpTargets: Object.freeze(httpTargets),
+    httpTimeoutMs,
+    httpSlowMs,
     mode: hubUrl ? "hub" : "standalone",
   });
 }

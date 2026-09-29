@@ -33,15 +33,34 @@ describe('loadConfig - camino feliz', () => {
   })
 })
 
+const TOKEN = 'a'.repeat(43)
+
 describe('loadConfig - modo de operacion', () => {
   test('sin MIND_HUB_URL el modo es standalone', () => {
     assert.equal(loadConfig(min).mode, 'standalone')
   })
 
   test('con MIND_HUB_URL el modo es hub', () => {
-    const cfg = loadConfig({ ...min, MIND_HUB_URL: 'https://hub.example.com' })
+    const cfg = loadConfig({ ...min, MIND_HUB_URL: 'https://hub.example.com', MIND_SERVER_TOKEN: TOKEN })
     assert.equal(cfg.mode, 'hub')
     assert.equal(cfg.hubUrl, 'https://hub.example.com')
+    assert.equal(cfg.serverToken, TOKEN)
+  })
+
+  test('en modo hub exige MIND_SERVER_TOKEN', () => {
+    // Sin credencial cada envio fallaria con 401 y el agente llenaria su
+    // buffer en silencio.
+    assert.throws(
+      () => loadConfig({ ...min, MIND_HUB_URL: 'https://hub.example.com' }),
+      (err) => err instanceof ConfigError && err.problems.some((p) => p.includes('MIND_SERVER_TOKEN'))
+    )
+  })
+
+  test('rechaza un MIND_SERVER_TOKEN corto', () => {
+    assert.throws(
+      () => loadConfig({ ...min, MIND_HUB_URL: 'https://hub.example.com', MIND_SERVER_TOKEN: 'abc' }),
+      /demasiado corto/
+    )
   })
 
   test('rechaza una MIND_HUB_URL que no es URL http/https', () => {
@@ -110,5 +129,48 @@ describe('loadConfig - validacion', () => {
         `esperaba al menos 4 problemas (nombre, intervalo, nivel, cpu), llegaron ${err.problems.length}`
       )
     }
+  })
+})
+
+describe('loadConfig - colector de Docker', () => {
+  test('sin MIND_DOCKER_HOST el colector queda desactivado', () => {
+    assert.equal(loadConfig(min).dockerHost, null)
+  })
+
+  test('acepta socket unix y tcp', () => {
+    assert.equal(loadConfig({ ...min, MIND_DOCKER_HOST: 'unix:///var/run/docker.sock' }).dockerHost, 'unix:///var/run/docker.sock')
+    assert.equal(loadConfig({ ...min, MIND_DOCKER_HOST: 'tcp://socket-proxy:2375' }).dockerHost, 'tcp://socket-proxy:2375')
+  })
+
+  test('rechaza un MIND_DOCKER_HOST con otro esquema', () => {
+    assert.throws(() => loadConfig({ ...min, MIND_DOCKER_HOST: 'http://localhost:2375' }), /MIND_DOCKER_HOST/)
+  })
+})
+
+describe('loadConfig - aplicaciones por HTTP', () => {
+  test('sin MIND_HTTP_TARGETS no hay aplicaciones que sondear', () => {
+    assert.deepEqual(loadConfig(min).httpTargets, [])
+  })
+
+  test('lee nombre=url separados por comas', () => {
+    const cfg = loadConfig({ ...min, MIND_HTTP_TARGETS: ' portal=https://portal.example.com/ , api=http://api:3000/health ' })
+    assert.deepEqual(cfg.httpTargets, [
+      { name: 'portal', url: 'https://portal.example.com/' },
+      { name: 'api', url: 'http://api:3000/health' }
+    ])
+  })
+
+  test('reporta todos los objetivos invalidos de una vez', () => {
+    assert.throws(
+      () => loadConfig({ ...min, MIND_HTTP_TARGETS: 'sinurl,ftp=ftp://x,ok=http://a,ok=http://b,x=http://user:clave@a' }),
+      (err) => err instanceof ConfigError &&
+        err.problems.length === 4 &&
+        err.problems.some((p) => p.includes('usuario ni contrasena')) &&
+        err.problems.some((p) => p.includes('repetido'))
+    )
+  })
+
+  test('el umbral de lentitud debe ser menor que el timeout', () => {
+    assert.throws(() => loadConfig({ ...min, MIND_HTTP_SLOW_MS: '5000', MIND_HTTP_TIMEOUT_MS: '3000' }), /MIND_HTTP_SLOW_MS/)
   })
 })
