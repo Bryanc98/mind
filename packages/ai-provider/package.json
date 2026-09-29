@@ -1,0 +1,13 @@
+{
+  "name": "@mind/ai-provider",
+  "version": "0.0.0",
+  "type": "module",
+  "license": "Apache-2.0",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  }
+}
