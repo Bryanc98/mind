@@ -31,8 +31,7 @@ export const STATES = Object.freeze({
  * @returns {{ status: string, consecutiveFailures: number, since: number|null, changed: boolean }}
  */
 export function initialState () {
-  // TODO: implementar
-  throw new Error('initialState: sin implementar')
+  return { status: STATES.UNKNOWN, consecutiveFailures: 0, since: null, changed: false }
 }
 
 /**
@@ -49,6 +48,25 @@ export function initialState () {
  * @returns {{ status: string, consecutiveFailures: number, since: number|null, changed: boolean }}
  */
 export function nextState (prev, check, cfg) {
-  // TODO: implementar. No mutar `prev`: devolver siempre un objeto nuevo.
-  throw new Error('nextState: sin implementar')
+  let status
+  let consecutiveFailures
+
+  if (check.ok) {
+    status = STATES.UP
+    consecutiveFailures = 0
+  } else {
+    consecutiveFailures = prev.consecutiveFailures + 1
+    if (consecutiveFailures >= cfg.failuresToDown) status = STATES.DOWN
+    else if (consecutiveFailures >= cfg.failuresToDegrade) status = STATES.DEGRADED
+    // Sin evidencia suficiente se conserva el estado anterior, sea cual sea.
+    else status = prev.status
+  }
+
+  const changed = status !== prev.status
+  return {
+    status,
+    consecutiveFailures,
+    since: changed ? check.at : prev.since,
+    changed
+  }
 }
